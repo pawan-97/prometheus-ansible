@@ -1,0 +1,70 @@
+---
+- name: Install and Configure Prometheus Node Exporter on Alpine Linux
+  hosts: alpine
+  become: yes
+  tasks:
+    - name: Install required packages (wget and tar)
+      apk:
+        name:
+          - wget
+          - tar
+        state: present
+        update_cache: yes
+
+    - name: Download Node Exporter binary
+      get_url:
+        url: https://github.com/prometheus/node_exporter/releases/download/v0.18.1/node_exporter-0.18.1.linux-amd64.tar.gz
+        dest: /tmp/node_exporter-0.18.1.linux-amd64.tar.gz
+
+    - name: Extract Node Exporter binary
+      unarchive:
+        src: /tmp/node_exporter-0.18.1.linux-amd64.tar.gz
+        dest: /tmp/
+        remote_src: yes
+
+    - name: Move Node Exporter binary to /usr/local/bin
+      copy:
+        src: /tmp/node_exporter-0.18.1.linux-amd64/node_exporter
+        dest: /usr/local/bin/node_exporter
+        remote_src: yes
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Create a system user for Node Exporter
+      user:
+        name: node_exporter
+        shell: /bin/false
+        system: yes
+        create_home: no
+
+    - name: Create Node Exporter OpenRC init script
+      copy:
+        dest: /etc/init.d/node_exporter
+        content: |
+          #!/sbin/openrc-run
+          command="/usr/local/bin/node_exporter"
+          command_args=""
+          pidfile="/var/run/node_exporter.pid"
+          command_background=true
+
+          depend() {
+              need net
+          }
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Enable Node Exporter service
+      command: rc-update add node_exporter default
+      changed_when: false
+
+    - name: Start Node Exporter service
+      command: rc-service node_exporter start
+      changed_when: false
+
+    - name: Ensure Node Exporter is running
+      command: rc-service node_exporter status
+      register: service_status
+      changed_when: false
+      failed_when: service_status.rc != 0

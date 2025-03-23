@@ -1,0 +1,98 @@
+---
+- name: Install and Configure Prometheus Alert Manager
+  hosts: prom
+  become: yes
+  tasks:
+    - name: Create alertmanager group
+      group:
+        name: alertmanager
+        state: present
+
+    - name: Create alertmanager user
+      user:
+        name: alertmanager
+        shell: /bin/false
+        system: yes
+        group: alertmanager
+        create_home: no
+
+    - name: Create necessary directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: alertmanager
+        group: alertmanager
+        mode: '0755'
+      loop:
+        - /etc/alertmanager/templates
+        - /var/lib/alertmanager
+
+    - name: Download Alert Manager binary
+      get_url:
+        url: https://github.com/prometheus/alertmanager/releases/download/v0.28.1/alertmanager-0.28.1.linux-amd64.tar.gz
+        dest: /tmp/alertmanager-0.28.1.linux-amd64.tar.gz
+
+    - name: Extract Alert Manager binary
+      unarchive:
+        src: /tmp/alertmanager-0.28.1.linux-amd64.tar.gz
+        dest: /tmp/
+        remote_src: yes
+
+    - name: Copy Alert Manager binaries to /usr/bin
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        remote_src: yes
+        owner: alertmanager
+        group: alertmanager
+        mode: '0755'
+      loop:
+        - { src: "/tmp/alertmanager-0.28.1.linux-amd64/alertmanager", dest: "/usr/bin/alertmanager" }
+        - { src: "/tmp/alertmanager-0.28.1.linux-amd64/amtool", dest: "/usr/bin/amtool" }
+
+    - name: Copy Alert Manager configuration file
+      copy:
+        src: /tmp/alertmanager-0.28.1.linux-amd64/alertmanager.yml
+        dest: /etc/alertmanager/alertmanager.yml
+        remote_src: yes
+        owner: alertmanager
+        group: alertmanager
+        mode: '0644'
+
+    - name: Create Alert Manager systemd service file
+      copy:
+        dest: /etc/systemd/system/alertmanager.service
+        content: |
+          [Unit]
+          Description=AlertManager
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          User=alertmanager
+          Group=alertmanager
+          Type=simple
+          ExecStart=/usr/bin/alertmanager \
+              --config.file /etc/alertmanager/alertmanager.yml \
+              --storage.path /var/lib/alertmanager/
+
+          [Install]
+          WantedBy=multi-user.target
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Start and enable Alert Manager service
+      systemd:
+        name: alertmanager
+        state: started
+        enabled: yes
+
+    - name: Verify Alert Manager service status
+      systemd:
+        name: alertmanager
+        state: started

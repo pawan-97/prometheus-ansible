@@ -1,0 +1,134 @@
+---
+- name: Install and Configure Prometheus
+  hosts: prom
+  become: true
+  tasks:
+  - name: Update apt cache
+    ansible.builtin.apt:
+      update_cache: true
+  - name: "Create Prometheus system group"
+    ansible.builtin.group:
+      name: prometheus
+      system: true
+
+  - name: Create Prometheus system user
+    ansible.builtin.user:
+      name: prometheus
+      shell: /sbin/nologin
+      system: true
+      group: prometheus
+  
+  - name: Create Prometheus data directory
+    ansible.builtin.file:
+      path: /var/lib/prometheus
+      state: directory
+      owner: prometheus
+      group: prometheus
+      mode: '0755'
+
+  - name: Create Prometheus config directories
+    ansible.builtin.file:
+      path: "{{ item }}"
+      state: directory
+      owner: prometheus
+      group: prometheus
+      mode: '0775'
+    loop:
+      - /etc/prometheus/rules
+      - /etc/prometheus/rules.d
+      - /etc/prometheus/files_sd
+
+  - name: Fetch the latest Prometheus version from GitHub API
+    ansible.builtin.uri:
+      url: https://api.github.com/repos/prometheus/prometheus/releases/latest
+      return_content: yes
+    register: github_response
+    until: github_response.status == 200
+    retries: 3
+    delay: 5
+
+  - name: Set the latest Prometheus version
+    ansible.builtin.set_fact:
+      prometheus_version: "{{ github_response.json.tag_name | regex_replace('^v', '') }}"
+
+  - name: Debug the latest Prometheus version
+    ansible.builtin.debug:
+      msg: "Latest Prometheus version: {{ prometheus_version }}"
+
+  - name: Download Prometheus binary
+    ansible.builtin.get_url:
+      url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+      dest: /tmp/prometheus.tar.gz
+
+  - name: Extract Prometheus binary
+    ansible.builtin.unarchive:
+      src: /tmp/prometheus.tar.gz
+      dest: /tmp/
+      remote_src: yes
+
+  - name: Move Prometheus binaries to /usr/local/bin
+    ansible.builtin.copy:
+      src: "{{ item }}"
+      dest: /usr/local/bin/
+      remote_src: yes
+      owner: root
+      group: root
+      mode: '0755'
+    loop:
+      - /tmp/prometheus-{{ prometheus_version }}.linux-amd64/prometheus
+      - /tmp/prometheus-{{ prometheus_version }}.linux-amd64/promtool
+
+  # - name: Move Prometheus configuration files
+  #   ansible.builtin.copy:
+  #     src: "{{ item.src }}"
+  #     dest: "{{ item.dest }}"
+  #     remote_src: yes
+  #     owner: prometheus
+  #     group: prometheus
+  #     mode: '0644'
+  #   loop:
+      
+  #     - { src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/consoles", dest: "/etc/prometheus/consoles" }
+  #     - { src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/console_libraries", dest: "/etc/prometheus/console_libraries" }
+
+  - name: Create Prometheus systemd service file
+    ansible.builtin.copy:
+      dest: /etc/systemd/system/prometheus.service
+      content: |
+        [Unit]
+        Description=Prometheus
+        Documentation=https://prometheus.io/docs/introduction/overview/
+        Wants=network-online.target
+        After=network-online.target
+
+        [Service]
+        Type=simple
+        User=prometheus
+        Group=prometheus
+        ExecReload=/bin/kill -HUP \$MAINPID
+        ExecStart=/usr/local/bin/prometheus \
+          --config.file=/etc/prometheus/prometheus.yml \
+          --storage.tsdb.path=/var/lib/prometheus \
+          --web.console.templates=/etc/prometheus/consoles \
+          --web.console.libraries=/etc/prometheus/console_libraries \
+          --web.listen-address=0.0.0.0:9090 \
+          --web.external-url=
+
+        SyslogIdentifier=prometheus
+        Restart=always
+
+        [Install]
+        WantedBy=multi-user.target
+      owner: root
+      group: root
+      mode: '0644'
+
+  - name: Reload systemd daemon
+    ansible.builtin.systemd:
+      daemon_reload: true
+
+  - name: Start and enable Prometheus service
+    ansible.builtin.systemd:
+      name: prometheus
+      state: started
+      enabled: true
