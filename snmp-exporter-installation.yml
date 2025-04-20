@@ -1,0 +1,61 @@
+---
+- name: Install and Configure SNMP Exporter
+  hosts: prom
+  become: yes
+  tasks:
+    - name: Download SNMP Exporter binary
+      get_url:
+        url: https://github.com/prometheus/snmp_exporter/releases/download/v0.28.0/snmp_exporter-0.28.0.linux-amd64.tar.gz
+        dest: /tmp/snmp_exporter-0.28.0.linux-amd64.tar.gz
+
+    - name: Extract SNMP Exporter binary
+      unarchive:
+        src: /tmp/snmp_exporter-0.28.0.linux-amd64.tar.gz
+        dest: /tmp/
+        remote_src: yes
+
+    - name: Copy SNMP Exporter binary and configuration file
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        remote_src: yes
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - { src: "/tmp/snmp_exporter-0.28.0.linux-amd64/snmp_exporter", dest: "/usr/local/bin/snmp_exporter" }
+        - { src: "/tmp/snmp_exporter-0.28.0.linux-amd64/snmp.yml", dest: "/usr/local/bin/snmp.yml" }
+
+    - name: Create SNMP Exporter systemd service file
+      copy:
+        dest: /etc/systemd/system/snmp-exporter.service   
+        content: |
+          [Unit]
+          Description=Prometheus SNMP Exporter Service
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=prometheus
+          ExecStart=/usr/local/bin/snmp_exporter --config.file="/usr/local/bin/snmp.yml"
+
+          [Install]
+          WantedBy=multi-user.target
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Start and enable SNMP Exporter service
+      systemd:
+        name: snmp-exporter
+        state: started
+        enabled: yes
+
+    - name: Verify SNMP Exporter service status
+      systemd:
+        name: snmp-exporter
+        state: started
